@@ -1,0 +1,31 @@
+flowchart TD
+    %% Music Recommender Simulation - system architecture
+
+    CSV[("data/songs.csv<br/>song catalog")]
+    PROFILES["User preference profiles<br/>(defined in src/main.py)"]
+
+    subgraph REC["src/recommender.py"]
+        LOAD["load_songs()<br/>parse CSV, convert numeric fields"]
+        PREFS["profile_to_prefs()<br/>UserProfile → prefs dict"]
+        SCORE["score_song()<br/>genre + mood matches<br/>closeness: energy, acousticness,<br/>valence, instrumentalness<br/>+ popularity / discovery"]
+        RANK["recommend_songs()<br/>score every song, sort by score<br/>tie-break: energy, then title<br/>return top k"]
+        OOP["Recommender class<br/>recommend() / explain_recommendation()"]
+    end
+
+    MAIN["src/main.py<br/>print_recommendations()"]
+    OUT[/"Top-k songs with score<br/>and explanation"/]
+    TESTS["tests/test_recommender.py<br/>(pytest)"]
+
+    CSV --> LOAD
+    LOAD --> RANK
+    PROFILES --> MAIN
+    MAIN --> RANK
+    RANK --> SCORE
+    SCORE --> RANK
+    RANK --> MAIN
+    MAIN --> OUT
+
+    OOP --> PREFS
+    PREFS --> RANK
+    PREFS --> SCORE
+    TESTS -. verifies .-> OOP
