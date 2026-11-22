@@ -14,6 +14,9 @@ from dotenv import load_dotenv
 from src.ai_recommender import recommend_from_text
 from src.recommender import load_songs, recommend_songs
 
+# Highest possible score: sum of all weights in src/recommender.py (see README table)
+MAX_SCORE = 6.75
+
 # High-Energy Pop (default): upbeat pop listener
 POP_HAPPY = {
     "favorite_genre": "pop",
@@ -129,11 +132,38 @@ def print_ai_result(result: dict) -> None:
     print(f"Request: {result['request']}")
     print(f"Mode: {mode}")
     print("=" * 64)
-    print(result["summary"])
+
+    # 1. The user profile the AI built (same shape as the preset profiles)
+    p = result["prefs"]
+    parsed = not any("could not understand" in w or "AI unavailable" in w
+                     for w in result["warnings"])
+    print("Profile built from your request:" if parsed
+          else "Profile (defaults; the AI could not read your request):")
+    print(f"  genre: {p['favorite_genre'] or '(any)'} | mood: {p['favorite_mood'] or '(any)'}")
+    print(f"  energy {p['target_energy']:.2f} | acousticness {p['target_acousticness']:.2f} | "
+          f"valence {p['target_valence']:.2f} | instrumentalness "
+          f"{p['target_instrumentalness']:.2f} | discovery {p['discovery']:.2f}")
+
+    # 2. Final picks (AI-written when available), with each song's weighted score
+    scores = {song["title"]: score for song, score, _ in result["retrieved"]}
+    print(f"\n{'AI picks' if result['used_ai'] else 'Top picks'}: {result['summary']}")
     for rank, pick in enumerate(result["picks"], 1):
         song = pick["song"]
-        print(f"{rank}. {song['title']} by {song['artist']}  [{song['genre']}, {song['mood']}]")
-        print(f"   {pick['reason']}")
+        print(f"{rank}. {song['title']} by {song['artist']}  [{song['genre']}, {song['mood']}]"
+              f"  score {scores[song['title']]:.2f}")
+        if result["used_ai"]:
+            print(f"   {pick['reason']}")
+
+    # 3. What the weighted scoring engine retrieved, with full breakdowns
+    picked = {pick["song"]["title"] for pick in result["picks"]}
+    print(f"\nRetrieved by weighted scoring (top {len(result['retrieved'])}, "
+          f"max {MAX_SCORE:.2f}; * = picked):")
+    for rank, (song, score, explanation) in enumerate(result["retrieved"], 1):
+        mark = "*" if song["title"] in picked else " "
+        print(f" {mark}{rank}. {song['title']} by {song['artist']}  score {score:.2f}")
+        for reason in explanation.split("; "):
+            print(f"       - {reason}")
+
     if result["warnings"]:
         print("\nNotes:")
         for w in result["warnings"]:
