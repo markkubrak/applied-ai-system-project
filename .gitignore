@@ -11,5 +11,9 @@ venv/
 # OS files
 .DS_Store
 
+# Secrets and logs
+.env
+logs/
+
 # Pytest cache
 .pytest_cache/

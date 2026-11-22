@@ -1,31 +1,46 @@
 flowchart TD
-    %% Music Recommender Simulation - system architecture
+    %% Music Recommender - RAG architecture
 
+    USER(["User request<br/>(plain English)"])
+    MAIN["src/main.py<br/>CLI: interactive / --ask / --profiles"]
     CSV[("data/songs.csv<br/>song catalog")]
-    PROFILES["User preference profiles<br/>(defined in src/main.py)"]
+    GEMINI{{"Gemini API<br/>(LLM)"}}
+    LOG[("logs/recommender.log")]
 
-    subgraph REC["src/recommender.py"]
-        LOAD["load_songs()<br/>parse CSV, convert numeric fields"]
-        PREFS["profile_to_prefs()<br/>UserProfile → prefs dict"]
-        SCORE["score_song()<br/>genre + mood matches<br/>closeness: energy, acousticness,<br/>valence, instrumentalness<br/>+ popularity / discovery"]
-        RANK["recommend_songs()<br/>score every song, sort by score<br/>tie-break: energy, then title<br/>return top k"]
-        OOP["Recommender class<br/>recommend() / explain_recommendation()"]
+    subgraph AI["src/ai_recommender.py: recommend_from_text()"]
+        PARSE["1. Parse<br/>parse_request(): LLM → preference JSON"]
+        GUARD["2. Guardrail<br/>validate_prefs(): clamp 0-1,<br/>reject unknown genre/mood, defaults"]
+        GEN["4. Generate<br/>LLM writes picks using ONLY<br/>retrieved songs as context"]
+        VERIFY["5. Verify<br/>verify_picks(): drop songs<br/>not in retrieved set"]
+        FALLBACK["Fallback<br/>top ranked songs, no AI<br/>(missing key, API error, no valid picks)"]
     end
 
-    MAIN["src/main.py<br/>print_recommendations()"]
-    OUT[/"Top-k songs with score<br/>and explanation"/]
-    TESTS["tests/test_recommender.py<br/>(pytest)"]
+    subgraph REC["src/recommender.py: retrieval engine"]
+        LOAD["load_songs()"]
+        RANK["3. Retrieve<br/>recommend_songs() + score_song()<br/>top-k with score explanations"]
+    end
 
-    CSV --> LOAD
-    LOAD --> RANK
-    PROFILES --> MAIN
-    MAIN --> RANK
-    RANK --> SCORE
-    SCORE --> RANK
-    RANK --> MAIN
-    MAIN --> OUT
+    OUT[/"Recommendations with reasons<br/>+ warnings"/]
 
-    OOP --> PREFS
-    PREFS --> RANK
-    PREFS --> SCORE
-    TESTS -. verifies .-> OOP
+    subgraph QA["Reliability testing"]
+        TESTS["tests/test_ai_recommender.py<br/>fake LLM, no key needed"]
+        EVAL["src/evaluate.py<br/>parsing, grounding, AI success,<br/>consistency on real Gemini"]
+    end
+
+    USER --> MAIN --> PARSE
+    CSV --> LOAD --> RANK
+    PARSE <--> GEMINI
+    PARSE --> GUARD --> RANK
+    RANK --> GEN
+    GEN <--> GEMINI
+    GEN --> VERIFY
+    VERIFY -- "valid picks" --> OUT
+    VERIFY -- "none valid" --> FALLBACK
+    PARSE -. "error: default prefs" .-> GUARD
+    GEN -. "error" .-> FALLBACK
+    FALLBACK --> OUT
+    OUT --> MAIN
+
+    AI -. "logs every step" .-> LOG
+    TESTS -. checks .-> AI
+    EVAL -. checks .-> AI

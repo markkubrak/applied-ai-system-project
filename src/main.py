@@ -1,9 +1,17 @@
 """
 Command line runner for the Music Recommender Simulation.
 
-Run from the project root with:  python -m src.main
+Run from the project root with:
+    python -m src.main                      interactive AI recommender
+    python -m src.main --ask "chill study music, no vocals"
+    python -m src.main --profiles           original preset-profile demo (no AI)
 """
 
+import argparse
+
+from dotenv import load_dotenv
+
+from src.ai_recommender import recommend_from_text
 from src.recommender import load_songs, recommend_songs
 
 # High-Energy Pop (default): upbeat pop listener
@@ -109,12 +117,57 @@ def print_recommendations(name: str, user_prefs: dict, songs: list, k: int = 5) 
     print()
 
 
+def show_status(message: str) -> None:
+    """Print a progress line right away so slow API calls don't look frozen."""
+    print(f"  ... {message}", flush=True)
+
+
+def print_ai_result(result: dict) -> None:
+    """Print the output of the AI (RAG) pipeline."""
+    mode = "AI (Gemini + retrieval)" if result["used_ai"] else "Fallback (ranked list, no AI)"
+    print("=" * 64)
+    print(f"Request: {result['request']}")
+    print(f"Mode: {mode}")
+    print("=" * 64)
+    print(result["summary"])
+    for rank, pick in enumerate(result["picks"], 1):
+        song = pick["song"]
+        print(f"{rank}. {song['title']} by {song['artist']}  [{song['genre']}, {song['mood']}]")
+        print(f"   {pick['reason']}")
+    if result["warnings"]:
+        print("\nNotes:")
+        for w in result["warnings"]:
+            print(f"  - {w}")
+    print()
+
+
 def main() -> None:
+    parser = argparse.ArgumentParser(description="Music Recommender Simulation")
+    parser.add_argument("--ask", metavar="REQUEST",
+                        help='natural-language request, e.g. --ask "calm music for studying"')
+    parser.add_argument("--profiles", action="store_true",
+                        help="run the original preset-profile demo (no AI)")
+    args = parser.parse_args()
+
+    load_dotenv()  # reads GEMINI_API_KEY from .env if present
     songs = load_songs("data/songs.csv")
     print(f"Loaded songs: {len(songs)}\n")
 
-    for name, prefs in PROFILES.items():
-        print_recommendations(name, prefs, songs)
+    if args.profiles:
+        for name, prefs in PROFILES.items():
+            print_recommendations(name, prefs, songs)
+    elif args.ask:
+        print_ai_result(recommend_from_text(args.ask, songs, on_status=show_status))
+    else:
+        print("Describe what you want to hear (blank line to quit).")
+        while True:
+            try:
+                request = input("> ").strip()
+            except (EOFError, KeyboardInterrupt):
+                break
+            if not request:
+                break
+            print_ai_result(recommend_from_text(request, songs, on_status=show_status))
 
 
 if __name__ == "__main__":

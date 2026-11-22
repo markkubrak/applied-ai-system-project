@@ -15,6 +15,24 @@ Replace this paragraph with your own summary of what your version does.
 
 ---
 
+## AI Feature: Retrieval-Augmented Generation (RAG)
+
+You can describe what you want in plain English, for example *"calm lofi beats to study to, no vocals"*. The system then runs this pipeline (see [diagrams/architecture.mmd](diagrams/architecture.mmd)):
+
+1. **Parse:** Gemini turns the request into a preference profile (genre, mood, energy, acousticness, valence, instrumentalness, discovery).
+2. **Guardrail:** `validate_prefs()` clamps numbers to 0–1, rejects genres and moods that aren't in the catalog, and fills in defaults for missing values.
+3. **Retrieve:** the content-based scoring engine described below ranks the catalog and returns the top 5 songs, each with its score breakdown.
+4. **Generate:** Gemini picks up to 3 songs and explains them using **only** the retrieved songs and their score breakdowns as context.
+5. **Verify:** any song the model names that wasn't retrieved is dropped, so the model can't make songs up. If the API key is missing, the API fails, or the model returns no valid picks, the system falls back to the plain ranked list and says why.
+
+Every step is logged to `logs/recommender.log`. The code is in [src/ai_recommender.py](src/ai_recommender.py).
+
+**Reliability testing:**
+- `tests/test_ai_recommender.py` uses a fake LLM to test grounding, removal of made-up songs, error fallback and input validation. It needs no API key.
+- `python -m src.evaluate` runs fixed requests against the real Gemini API. It reports parsing accuracy, grounding, how often the AI path succeeded, and consistency across repeated runs.
+
+---
+
 ## How The System Works
 
 Real-world platforms like Spotify, Apple Music and YouTube use hybrid systems. **Collaborative filtering** finds patterns in the behavior of millions of users ("listeners like you also loved…"). **Content-based filtering** recommends songs whose attributes resemble what you already enjoy. They draw on interaction data (plays, skips, likes, playlist adds), audio features (energy, tempo, valence), metadata (genre, artist, mood) and context such as time of day. Our simulation has no listening history from other users, so it is a **content-based** recommender. It prioritizes how well a song's attributes *match* the user's preferences, not whether a value is simply high or low. Each song gets a score from a weighted sum: points for a genre match and a mood match, plus closeness scores such as `1 - |song.energy - user.target_energy|`. A separate ranking step sorts every song by score and returns the top *k*.
@@ -76,34 +94,45 @@ If `target_acousticness` is not set, it is taken from `likes_acoustic` (True →
 
 ### Setup
 
+Requires Python 3.10 or newer. Run every command from the project root folder.
+
 1. Create a virtual environment (optional but recommended):
 
    ```bash
    python -m venv .venv
    source .venv/bin/activate      # Mac or Linux
    .venv\Scripts\activate         # Windows
+   ```
 
-2. Install dependencies
+2. Install dependencies:
+
+   ```bash
+   pip install -r requirements.txt
+   ```
+
+3. Add your Gemini API key. Get a free key at https://aistudio.google.com/apikey, then copy the example file and paste your key into it:
+
+   ```bash
+   cp .env.example .env           # Mac or Linux
+   copy .env.example .env         # Windows
+   ```
+
+   Without a key, the app still runs, but it uses the fallback ranked list instead of the AI.
+
+### Running the App
 
 ```bash
-pip install -r requirements.txt
+python -m src.main                                      # interactive: type requests, blank line to quit
+python -m src.main --ask "sad acoustic songs for a rainy day"
+python -m src.main --profiles                           # original preset-profile demo (no AI)
 ```
 
-3. Run the app:
+### Running Tests and Evaluation
 
 ```bash
-python -m src.main
+pytest                       # unit tests, no API key needed
+python -m src.evaluate       # reliability evaluation against the real Gemini API
 ```
-
-### Running Tests
-
-Run the starter tests with:
-
-```bash
-pytest
-```
-
-You can add more tests in `tests/test_recommender.py`.
 
 ---
 
