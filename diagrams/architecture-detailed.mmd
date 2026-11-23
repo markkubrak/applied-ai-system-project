@@ -1,0 +1,61 @@
+flowchart TD
+    %% Vibenator 6000 - detailed architecture (every module and function)
+
+    USER(["User"])
+    APP["app.py (Streamlit)<br/>Discover / My Playlists / Add a Song<br/>Mood mode background"]
+    CLI["src/main.py (CLI)<br/>--ask / --playlist / --profiles"]
+    CSV[("data/songs.csv<br/>catalog")]
+    LIBJSON[("data/user_library.json<br/>user songs + playlists")]
+    GEMINI{{"Gemini API"}}
+    LOG[("logs/recommender.log")]
+
+    subgraph LIB["src/library.py"]
+        STORE["load / save library<br/>add_song, playlists<br/>(duplicate + corrupt-file guards)"]
+        PROFILE["playlist_profile()<br/>average features, most common<br/>genre/mood, discovery from popularity"]
+    end
+
+    subgraph AI["src/ai_recommender.py"]
+        EST["estimate_song_features()<br/>LLM guesses features → validate_song()<br/>clamp ranges, flag unknown songs"]
+        PARSE["Parse request<br/>parse_request() → validate_prefs()"]
+        BLEND["blend_prefs()<br/>playlist profile + request tweak"]
+        GEN["Generate<br/>LLM picks using ONLY retrieved songs"]
+        VERIFY["Verify<br/>drop songs not retrieved"]
+        FALLBACK["Fallback<br/>top ranked songs, no AI"]
+    end
+
+    RANK["src/recommender.py<br/>recommend_songs() + score_song()<br/>fixed weights → top 5 with breakdowns<br/>(excludes songs already in playlist)"]
+    OUT[/"Profile + picks + score breakdowns<br/>+ warnings"/]
+
+    USER --> APP & CLI
+    APP -- "add song" --> EST
+    EST <--> GEMINI
+    EST -- "user reviews/edits" --> STORE
+    STORE <--> LIBJSON
+    STORE --> PROFILE
+
+    APP & CLI -- "text request" --> PARSE
+    PARSE <--> GEMINI
+    PARSE -- "Discover" --> RANK
+    PROFILE -- "playlist" --> BLEND
+    PARSE -- "optional tweak" --> BLEND
+    BLEND --> RANK
+    CSV --> RANK
+    STORE -- "user songs join the pool" --> RANK
+
+    RANK --> GEN
+    GEN <--> GEMINI
+    GEN --> VERIFY
+    VERIFY -- "valid picks" --> OUT
+    VERIFY -- "none valid" --> FALLBACK
+    GEN -. "API error" .-> FALLBACK
+    FALLBACK --> OUT
+    OUT --> APP & CLI
+
+    AI -. "logs every step" .-> LOG
+
+    subgraph QA["Reliability testing"]
+        T1["tests/test_ai_recommender.py"]
+        T2["tests/test_library.py"]
+        EVAL["src/evaluate.py (real Gemini)"]
+    end
+    QA -. checks .-> AI & LIB

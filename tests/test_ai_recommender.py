@@ -102,3 +102,11 @@ def test_status_messages_report_each_step():
 
     assert messages == ["Understanding your request...", "Searching the catalog...",
                         "Writing recommendations..."]
+
+
+def test_daily_quota_is_reported_clearly():
+    quota = RuntimeError("429 RESOURCE_EXHAUSTED. Generate content requests per day limit exceeded")
+    result = recommend_from_text("study music", SONGS, client=FakeLLM(quota, quota))
+
+    assert result["used_ai"] is False
+    assert any("daily request limit" in w for w in result["warnings"])

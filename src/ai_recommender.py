@@ -95,7 +95,8 @@ class GeminiClient:
                 )
                 return response.text or ""
             except Exception as exc:
-                temporary = any(code in str(exc) for code in RETRYABLE)
+                # A daily quota won't recover in seconds, so retrying only wastes time
+                temporary = any(code in str(exc) for code in RETRYABLE) and not is_daily_quota(exc)
                 if not temporary or attempt == MAX_ATTEMPTS:
                     raise
                 wait = 2 ** attempt
@@ -106,8 +107,16 @@ class GeminiClient:
                 time.sleep(wait)
 
 
+def is_daily_quota(exc: Exception) -> bool:
+    """True when the free-tier daily request limit is used up (resets about once a day)."""
+    text = str(exc)
+    return "RESOURCE_EXHAUSTED" in text and "per day" in text
+
+
 def describe_error(exc: Exception) -> str:
     """Short, user-friendly error text (the full error still goes to the log)."""
+    if is_daily_quota(exc):
+        return "the Gemini free-tier daily request limit is used up; it resets within 24 hours"
     if any(code in str(exc) for code in RETRYABLE):
         return "Gemini is overloaded or rate-limited right now; try again in a few minutes"
     return str(exc)

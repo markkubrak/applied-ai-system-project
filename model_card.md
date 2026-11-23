@@ -1,126 +1,153 @@
-# 🎧 Model Card: Music Recommender Simulation
+# 🎧 Model Card: Vibenator 6000 (AI Music Recommender)
 
 ## 1. Model Name  
 
 **Vibenator 6000**: it hunts down songs that fit the vibe you describe.
 
+It's a system rather than a single model. It has two parts:
+- **Google Gemini**, a large language model. It reads requests, explains picks and estimates song features. The default is `gemini-3.8-flash`; the final samples and evaluation ran on `gemini-3.5-flash-lite`.
+- **A hand-tuned scoring engine** that I built in Module 3. It decides which songs are retrieved.
+
 ---
 
 ## 2. Intended Use  
 
-**Goal / Task:** The Vibenator 6000 suggests the top 5 songs from a small catalog that best fit a listener's taste. You describe your favorite genre, your mood, and how energetic, acoustic, positive and instrumental you want the music to be. It gives every song a score and shows the best matches, with reasons for each one.
+**Goal / Task:** You describe what you want to hear in plain English, or pick a playlist you've built. The Vibenator 6000 recommends songs from its catalog and your own saved songs, and explains each pick in plain English. You can also add your own songs, and Gemini estimates their features for you to review.
 
-**Assumptions:** It assumes you can describe your taste with a few numbers and labels, and that your taste doesn't change while you're listening. It doesn't know anything about what you've listened to before.
+**Assumptions:**
+- Your taste can be summed up by a genre, a mood, and a few 0–1 values: energy, acousticness, valence, instrumentalness and discovery.
+- A playlist's taste is the average of its songs.
+- Gemini can translate everyday language into those values.
+- It knows nothing about your listening history.
 
 **Intended use:**
-- A classroom project for learning how content-based recommenders work.
-- Trying out different taste profiles and seeing how the scoring reacts.
-- Showing how weights and data choices create bias.
+- A portfolio and classroom project showing retrieval-augmented generation (RAG) with guardrails, fallbacks and testing.
+- Exploring how an LLM and a transparent scoring system can work together.
+- Showing how weights, data, and an AI's guesses create bias.
 
 **Not intended for:**
-- Real users or a real music app. The catalog is only 20 made-up songs.
-- Making decisions about artists, like which songs get promoted or paid. The song values are hand-written, not measured.
-- Judging anyone's "real" music taste. A few numbers can't capture that.
+- Real users or a real music app. The catalog has only 20 made-up songs.
+- Decisions about artists, such as promotion or payment. Song features are hand-written or estimated by an AI, not measured.
+- Judging anyone's "real" music taste.
 
 ---
 
 ## 3. How the Model Works  
 
-Think of it like a points game. Every song starts at zero and earns points for how well it fits you.
+**The pipeline for a text request:**
+1. **Understand.** Gemini turns your words into a taste profile. For example, "music to get hyped to at the gym" became *edm, intense, energy 0.95*.
+2. **Guardrail.** The profile is checked before it's used: numbers are clamped to 0–1, genres and moods that aren't in the catalog are dropped, and missing values get defaults.
+3. **Retrieve.** The scoring engine scores every song against the profile and keeps the top 5.
+4. **Generate.** Gemini picks up to 3 of those 5 and explains why, using only the retrieved songs and their score details.
+5. **Verify.** Any song Gemini names that wasn't retrieved is thrown away. If Gemini fails, or none of its picks survive, you get the top-ranked songs instead, with a note explaining why.
 
-- **Same genre as your favorite?** +2 points.
-- **Same mood?** +1 point.
-- **Energy:** up to 1.5 points. The closer the song's energy is to what you want, the more points it gets. A song isn't rewarded for being "more" energetic, only for being *closer* to your target.
-- **Acoustic sound:** up to 0.75 points, using the same "closer is better" idea.
-- **Happiness (valence) and vocals vs. instrumental:** up to 0.5 points each.
-- **Discovery:** up to 0.5 points. If you want hidden gems, less popular songs get a little boost. If you want hits, popular songs get it.
+**The scoring engine** (from Module 3) is a points game:
+- **Genre match:** +2 points.
+- **Mood match:** +1 point.
+- **Energy:** up to 1.5 points, for being *close* to your target (not for being "more" energetic).
+- **Acousticness:** up to 0.75 points, closeness again.
+- **Valence (happiness) and instrumentalness:** up to 0.5 points each, closeness again.
+- **Discovery:** up to 0.5 points, a small boost toward hidden gems or toward hits.
 
-The best possible score is 6.75. After every song is scored, they're sorted from highest to lowest, and the top 5 are shown. Each recommendation lists exactly where its points came from, like "genre match (+2.00)".
+The best possible score is 6.75. In the app it's shown as a **match %**, with reasons such as "✓ Same genre (rock)" or "Energy: very close to what you want".
 
-**Changes from the starter:** The starter only had genre, mood and energy. I added acousticness, valence, instrumentalness and a popularity-based discovery setting. I also made the score explain itself with a list of reasons.
+**Playlists:** a playlist becomes a taste profile by averaging its songs' features and taking the most common genre and mood. A tie means no genre or mood preference. Discovery comes from how popular the songs are. Songs already in the playlist are never recommended back. An optional tweak, like "but more acoustic", is parsed by Gemini and blended 50/50 with the playlist profile.
+
+**Adding your own song:** Gemini estimates its genre, mood, energy, tempo, popularity and other features. The values are clamped to valid ranges, songs Gemini doesn't recognize are flagged, and **you review and can edit every value before saving.**
 
 ---
 
 ## 4. Data  
 
-- **Size:** 20 songs in `data/songs.csv`. The starter had 10, and I added 10 more.
-- **Genres (17):** pop, indie pop, lofi, rock, ambient, jazz, synthwave, hip hop, classical, country, edm, r&b, metal, reggae, folk, latin, blues.
-- **Moods (16):** including happy, chill, intense, sad, angry, romantic, nostalgic, euphoric and peaceful. The starter only had positive or calm moods, so I added sad and angry ones.
-- **Features per song:** genre, mood, energy, tempo, valence (happiness), danceability, acousticness, plus three I added: instrumentalness, popularity (0–100) and release year.
+- **Catalog:** 20 fictional songs in `data/songs.csv`. The starter had 10, and I added 10 more.
+  - **Genres (17):** pop, indie pop, lofi, rock, ambient, jazz, synthwave, hip hop, classical, country, edm, r&b, metal, reggae, folk, latin, blues.
+  - **Moods (16):** including happy, chill, intense, sad, angry, romantic, nostalgic, euphoric and peaceful.
+  - **Features per song:** genre, mood, energy, tempo, valence, danceability, acousticness, instrumentalness, popularity (0–100) and release year.
+- **User songs and playlists:** saved locally in `data/user_library.json`. That file is never committed. User songs are marked as AI-estimated or entered by hand.
+- **Gemini:** a general-purpose model with no fine-tuning. Prompts include the catalog's genre and mood lists so its answers fit the scoring engine.
 
 **Limits:**
-- It's tiny. Most genres have only 1 song, while lofi has 3.
-- The songs and their numbers are made up, not real measurements.
-- Tempo and danceability are stored but not scored, because they mostly repeat what energy already says.
-- Nothing about lyrics, language, culture, or what people actually listen to.
+- The catalog is tiny and uneven: most genres have 1 song, while lofi has 3.
+- Catalog values are made up, and user-song values are AI guesses. Neither is a real audio measurement. Spotify's audio-features API is closed to new apps.
+- Nothing about lyrics, language, culture or listening history.
 
 ---
 
 ## 5. Strengths  
 
-- **Clear, opposite tastes work great.** Pop, lofi and rock listeners get completely different top 5 lists, and the #1 song is always the obvious pick.
-- **It finds good songs outside your genre.** The lofi listener also gets ambient and jazz songs, which really do fit a study vibe.
-- **Every result explains itself.** You can see exactly why a song ranked where it did, which made it easy to spot problems.
-- **"Closer is better" scoring works.** A user who wants medium energy isn't pushed toward the loudest songs.
+- **Grounded answers.** Gemini can only recommend songs the retriever found. In the evaluation, 6 of 6 requests were fully grounded, with no invented songs.
+- **Understands everyday language.** "Sad acoustic songs for a rainy day" and "music to get hyped to at the gym" produced opposite, sensible profiles (energy 0.2 vs. 0.95) and fitting picks.
+- **Explainable.** Every pick shows a match % and plain-English reasons, and a toggle reveals the exact points per feature.
+- **Always gives an answer.** With no API key, an overloaded API or a used-up quota, the app falls back to the ranked list and says why. Every step is logged.
+- **A human checks the AI's guesses.** AI-estimated song features are shown for review before they're saved.
 
 ---
 
 ## 6. Limitations and Bias 
 
-**Main weakness: an exact genre + mood match can overpower everything else.** A genre match (+2.0) plus a mood match (+1.0) is worth 3 points, while a song that is completely wrong on energy only loses about 0.8 points. In the "Sad but Hyped" test, a user asked for energy 0.9, but the top pick was Empty Station Blues at energy 0.38, simply because it was the only blues/sad song. Matching is also exact text, so "intense" and "angry" count as unrelated: for the Deep Intense Rock listener, Gym Hero (a pop song tagged "intense") ranked above Iron Requiem (a 0.97-energy metal song tagged "angry"). This creates a filter bubble: users mostly see their own genre label, and great songs that sound right but carry a different tag get pushed down.
+**From the AI side:**
+- **Estimated features can be wrong.** For a song Gemini doesn't recognize, the values are guesses, and they directly affect recommendations. The review step and the "doesn't recognize this song" warning reduce this risk but don't remove it.
+- **Gemini's own judgment shapes the profile.** In testing, it mapped "k-pop" to the catalog genre "pop" rather than leaving the genre blank. That's reasonable, but it means the AI's assumptions about how genres relate become part of the result.
+- **Availability.** The AI features depend on Gemini's free tier: 20 requests per day for some models and 15 per minute. When limits are hit, recommendations fall back to the less personal ranked list.
 
-Other limitations found in testing:
+**From the scoring engine** (found in Module 3; full details in [docs/original-project.md](docs/original-project.md)):
+- **An exact genre + mood match can overpower everything else.** Those two labels are worth 3 points together, while a song that's completely wrong on energy loses only about 0.8. In the "Sad but Hyped" test, a user asking for energy 0.9 got a quiet blues song first.
+- **Exact text matching.** "Intense" and "angry", or "pop" and "indie pop", count as unrelated. This creates a filter bubble around the user's own labels.
+- **Discovery is weak.** The popularity bonus is at most 0.5 points, so it rarely changes the order.
 
-- **Small, uneven catalog:** 20 songs, 17 genres. Lofi has 3 songs, while most genres have only 1, so a blues or metal fan gets one genre match and then filler.
-- **Middle-of-the-road users are treated differently:** a user with target energy 0.5 is never more than 0.5 away from any song, so energy barely separates songs for them. A user at 0.9 or 0.1 sees much bigger differences.
-- **Discovery is too weak:** with discovery 1.0, the Hidden Gem Hunter's top pick was Velvet Hours (popularity 62), not the obscure songs. The popularity bonus is worth at most 0.5 points, so it rarely changes the order.
-- **Missing taste dimensions:** no lyrics, language, artist familiarity, or listening history, and the song values were hand-made rather than measured.
+**From playlists:**
+- **Averaging blurs mixed taste.** A playlist that's half metal and half lofi becomes a "medium" profile that fits neither half.
 
 ---
 
 ## 7. Evaluation  
 
-**Profiles tested** (full terminal output is in the README under "Experiments You Tried"):
+- **Unit tests (26 pass).** They use a fake LLM, so they need no API key and give the same result every time. They check:
+  - grounding, and that invented songs are dropped
+  - the fallback on API errors and on a used-up daily quota
+  - input validation and clamping
+  - playlist profiles, tie handling and duplicate songs
+  - recovery from a corrupted library file
+  - that playlist songs are never recommended back
+  - blending a tweak with a playlist
+  - plain-English explanations
+  - the original Module 3 scoring rules
+- **Web app checks.** I used Streamlit's headless test tool to script:
+  - switching playlists with one click
+  - the background updating immediately
+  - adding a song with one click
+  - delete confirmation
+  - the numbers toggle
+- **Live evaluation (`src/evaluate.py`, real Gemini).** It sent 6 fixed requests, plus 2 repeats for consistency.
+  - **Results:** parsing 5/6, grounding 6/6, AI used 6/6, consistency 2/2.
+  - **The one failure:** the k-pop request hit the per-minute rate limit. Rerun a minute later, Gemini got the energy right but chose "pop" as the genre.
+- **Module 3 profile tests.** The scoring engine was stress-tested with 3 normal and 4 adversarial profiles, plus a weight-shift experiment. The results and comparisons are in [docs/original-project.md](docs/original-project.md).
 
-- Three normal listeners: **High-Energy Pop**, **Chill Lofi**, **Deep Intense Rock**
-- Four edge cases built to trick the scorer: **Sad but Hyped** (sad mood with high energy), **Genre Ghost** (genre and mood not in the catalog), **Acoustic Raver** (EDM but fully acoustic), **Hidden Gem Hunter** (no genre or mood, everything at 0.5, maximum discovery)
-
-I checked whether the #1 song fit the profile, whether the rest of the top 5 "felt" like the same listener, and whether each score's reasons explained the ranking.
-
-**Does it match my intuition?** For the three normal profiles, mostly yes. Sunrise City, Midnight Coding and Storm Runner are the obvious top picks, and the lofi list fills in with ambient and jazz, which a study-music listener would enjoy.
-
-**Why does "Gym Hero" keep showing up?** Gym Hero appears in the top 5 for Happy Pop, Intense Rock *and* Sad but Hyped. In plain terms: the system gives points for each thing a song has in common with you. Gym Hero is labeled "pop", so pop fans get a 2-point bonus. It's also labeled "intense", so rock fans looking for "intense" get a 1-point bonus. And it's extremely high energy, which earns points from anyone who wants loud music. It's a "pretty good at everything" song, so it scores well for lots of people even though it isn't the perfect fit for any of them. A happy-pop listener probably wants Rooftop Lights (happy indie pop) more, but that song loses the 2-point genre bonus because "indie pop" isn't spelled "pop".
-
-**Comparing profiles:**
-
-- **High-Energy Pop vs. Chill Lofi:** the two lists share no songs at all. Pop pulls bright, high-energy, vocal tracks (energy 0.74–0.93), while lofi pulls quiet, acoustic, instrumental tracks (energy 0.28–0.42). This makes sense: their targets are opposite on energy, acousticness and instrumentalness.
-- **Chill Lofi vs. Deep Intense Rock:** again no overlap. Rock's list is loud and electric (Storm Runner, Iron Requiem), while lofi's is soft and acoustic. This confirms the profiles can tell "intense rock" from "chill lofi".
-- **High-Energy Pop vs. Deep Intense Rock:** these overlap on Gym Hero, Concrete Crown and Sunrise City, because both want high energy and low acousticness. The difference is at the top: Storm Runner wins for rock thanks to its genre and mood matches, and the rock list includes the darker Iron Requiem.
-- **Deep Intense Rock vs. Sad but Hyped:** both want loud music, so Storm Runner, Iron Requiem and Gym Hero appear in both. But Sad but Hyped's #1 is a quiet blues song, because the blues + sad label bonus outweighed the energy request. This was the most surprising result.
-- **Genre Ghost vs. High-Energy Pop:** with no genre or mood matches available, Genre Ghost's scores are bunched together (3.05–3.25), so its ranking depends on tiny numeric differences. Compare pop's clear 6.42 → 3.27 spread. The system still produces sensible mid-energy, upbeat songs, but with much less confidence.
-- **Acoustic Raver vs. Chill Lofi:** surprisingly, three lofi songs land in the Raver's top 5. The Raver asked for acoustic, instrumental songs, and only lofi and ambient songs have those traits. So the contradictory request was resolved in favor of texture rather than energy.
-- **Hidden Gem Hunter vs. everyone:** with every target at 0.5 and discovery maxed, almost all songs score about 3.0. The list is essentially arbitrary, which shows that the discovery bonus is too small to steer recommendations by itself.
-
-**Experiment (energy x2, genre x0.5):** Rooftop Lights moved above Gym Hero for the pop listener, and the Acoustic Raver's list switched from lofi songs to genuinely high-energy songs. Both changes feel more accurate. The Sad but Hyped result didn't change, because genre and mood together still outweigh energy. The change made the system less "label-driven" and more "sound-driven".
+**Does it match my intuition?** Mostly, yes. The gym request returned EDM, pop and rock songs with energy above 0.9. The rainy-day request returned melancholic folk, blues and quiet classical. When Gemini was unavailable, the fallback was honest about it, but less personal: for example, it ignored a "but with vocals" tweak.
 
 ---
 
 ## 8. Future Work  
 
-1. **Partial credit for similar labels.** "Pop" and "indie pop", or "chill" and "peaceful", should earn some points instead of zero. Then a song like Rooftop Lights wouldn't lose to Gym Hero just because of how its genre is spelled.
-2. **Rebalance the weights.** My experiment showed that more energy weight and less genre weight gave more accurate results. I'd also make the discovery bonus stronger, since right now it barely changes anything.
-3. **More variety in the top 5.** Limit how many songs from the same genre or artist can appear, and add a lot more songs so every genre has real options.
+1. **Partial credit for similar labels.** "Pop" and "indie pop", or "chill" and "peaceful", should earn some points. Gemini could even suggest these similarities, as long as a guardrail checks them.
+2. **A real feature source.** Measure audio features from user-uploaded audio files instead of relying on AI guesses. The same audio could also drive the mood background in real time.
+3. **Better playlist profiles.** Detect mixed playlists and recommend for each cluster separately, instead of averaging them into one profile.
+4. **Smarter rate-limit handling.** Pause between requests, cache repeated answers, and wait longer when the per-minute limit is hit.
+5. **Rebalance the weights and add songs.** More energy weight and less genre weight gave better results in my Module 3 experiment, and a larger catalog would give every genre real options.
 
 ---
 
 ## 9. Personal Reflection  
 
-**Biggest learning moment:** Realizing that scoring one song and ranking a list are two separate jobs. At first I thought a recommender just "picks songs". But a score by itself means nothing until you compare it to every other song. Splitting it into `score_song` and `recommend_songs` made the whole thing click. The second big moment was the "Sad but Hyped" test. I asked for high-energy music and got a slow blues song at #1, just because its labels matched. That's when I saw how much my weights decided the results.
+This project taught me that AI truly isn't perfect, and that testing the app yourself and confirming the changes your AI made still has real value. I found myself going back and forth to see if it actually did what I asked it to do because features it included looked fine at first.
+The better your initial set up is, the easier it is to continue working. I even had a small moment where I needed to refactor because of a major feature that I added (for example changing all the weight numbers to something easily readable).
+I also got to see additional features of Claude, how it prompts the user in multi-steps on what the user wants, which was helpful and often times I had to add on top of what Claude wanted to do.
+I've learned how RAG can be implemented in another system.
+I've learned how a connected API can be overloaded.
+I even realized that features I wanted weren't so great until they were placed alongside everything else.
 
-**How AI helped, and when I double-checked:** AI was really useful for explaining ideas like collaborative vs. content-based filtering, and for writing code fast. It also suggested new features like popularity and instrumentalness that made the project more interesting. But I still had to check its work. When it edited my README, it couldn't find the "How The System Works" heading at first because the capitalization was different. It also caught that `main.py` imported the recommender the wrong way, which would have crashed `python -m src.main`. And when it changed the default profile to lofi, I had to remember that my class instructions expected pop/happy. AI is fast, but I'm the one who has to know what the assignment and the results should look like.
+**A suggestion I accepted:** When I needed an AI feature, Claude suggested building RAG on top of my original Module 3 scoring engine instead of replacing it. Gemini reads my request, my scorer retrieves the top 5 songs, and Gemini is only allowed to pick from those 5. Any song it invents gets thrown out. I liked this because my weighted scoring didn't go to waste; it became the part that keeps the AI honest. Later, I also accepted its fix for the API quota: the app had been retrying errors that were actually a daily limit, so it was wasting requests and time.
 
-**What surprised me:** How "real" a few lines of math can feel. It's just adding up points, but the lists honestly looked like something a music app would show me. The lofi list even pulled in ambient and jazz songs on its own, which felt smart. It also surprised me how one song, Gym Hero, kept showing up for different people just by being "pretty good" at everything.
+**A suggestion I rejected or revised:** Claude suggested adding about 40 more made-up songs to the catalog. Instead, I wanted users to make their own playlists and add their own songs, with the taste profile learned from the playlist. That turned into a bigger and better feature than just more data. I also revised a lot of the UI after testing it myself: the raw score numbers were confusing, so I asked for plain-English reasons and a match % with a "Show the numbers" toggle. The playlist list needed two clicks to switch, so I asked for a dropdown. I also asked for a confirmation before deleting a playlist.
 
-**What I'd try next:** Add fake listening histories for a bunch of users and try collaborative filtering, "people like you also liked...". Then I'd combine it with my content-based scores to make a hybrid, like real apps do. I'd also give partial credit for similar genres and moods.
-
-**How this changed my view of music apps:** I now see that every recommendation app makes choices about what matters more, and those choices can quietly create filter bubbles. When Spotify keeps showing me the same kind of songs, it's probably not because nothing else exists. It's because the system was built to reward what I already like.
+**Limitations of my system:** The catalog is only 20 fictional songs, so some tastes don't have many good matches. When a user adds a song, Gemini guesses its features, and those guesses can be wrong, especially for songs it doesn't know. That's why the user has to review them before saving. A playlist's taste is an average, so a mixed playlist (half metal, half lofi) ends up as a "medium" profile that fits neither half. Genres and moods only match exactly, so "chill" and "relaxed" count as different. The AI also depends on Gemini's free tier, which only allows 20 requests a day for some models; when that runs out, the app falls back to a less personal ranked list.

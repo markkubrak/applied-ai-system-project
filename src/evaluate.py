@@ -6,6 +6,9 @@ Runs a fixed set of requests and checks:
   - grounding:   every recommended song exists in the retrieved set (no hallucinations)
   - AI success:  the AI path was used rather than the fallback
   - consistency: running the same request twice gives the same top pick
+                 (checked on the first CONSISTENCY_CASES requests only)
+
+Uses about 16 Gemini requests (the free tier allows 20 per day for some models).
 
 Run from the project root with:  python -m src.evaluate
 """
@@ -14,6 +17,8 @@ from dotenv import load_dotenv
 
 from src.ai_recommender import GeminiClient, log, recommend_from_text
 from src.recommender import load_songs
+
+CONSISTENCY_CASES = 2  # repeat only a few requests, to stay within free-tier quotas
 
 # Each case: request, plus checks on the parsed prefs (key -> (min, max) or exact string)
 CASES = [
@@ -52,17 +57,20 @@ def main() -> None:
     client = GeminiClient()
     totals = {"parsing": 0, "grounding": 0, "ai_used": 0, "consistency": 0}
 
-    for request, expected in CASES:
+    for i, (request, expected) in enumerate(CASES):
         first = recommend_from_text(request, songs, client=client)
-        second = recommend_from_text(request, songs, client=client)
+        second = (recommend_from_text(request, songs, client=client)
+                  if i < CONSISTENCY_CASES else None)
 
         retrieved = {s["title"] for s, _, _ in first["retrieved"]}
         results = {
             "parsing": not check_prefs(first["prefs"], expected),
             "grounding": all(p["song"]["title"] in retrieved for p in first["picks"]),
             "ai_used": first["used_ai"],
-            "consistency": first["picks"][0]["song"]["title"] == second["picks"][0]["song"]["title"],
         }
+        if second is not None:
+            results["consistency"] = (first["picks"][0]["song"]["title"]
+                                      == second["picks"][0]["song"]["title"])
         for key, ok in results.items():
             totals[key] += ok
 
@@ -75,11 +83,11 @@ def main() -> None:
             if not ok and key != "parsing":
                 print(f"       {key}: failed")
 
-    n = len(CASES)
     print("\nSummary")
     for key, count in totals.items():
+        n = min(CONSISTENCY_CASES, len(CASES)) if key == "consistency" else len(CASES)
         print(f"  {key:<12} {count}/{n}  ({count / n:.0%})")
-    log.info("evaluation summary: %s of %d", totals, n)
+    log.info("evaluation summary: %s", totals)
 
 
 if __name__ == "__main__":
