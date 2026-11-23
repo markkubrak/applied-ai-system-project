@@ -27,8 +27,25 @@ You can describe what you want in plain English, for example *"calm lofi beats t
 
 Every step is logged to `logs/recommender.log`. The code is in [src/ai_recommender.py](src/ai_recommender.py).
 
+### Playlists and your own songs
+
+In the web app (`streamlit run app.py`) you can build playlists and add your own songs:
+
+- **Adding a song:** you type a title and artist, and Gemini estimates its features (genre, mood, energy, valence, tempo, popularity, …). A guardrail clamps every value to its valid range and flags songs Gemini doesn't recognize. You can review and edit everything before saving. If Gemini is unavailable, you set the values yourself.
+- **A playlist becomes a taste profile:** the app averages the playlist songs' features and takes the most common genre and mood (a tie means no genre preference). Discovery comes from how popular the songs are. The result is the same kind of profile the scoring engine already uses, so the weights don't change.
+- **Recommending for a playlist:** the app retrieves songs from the catalog plus your own songs, skipping songs already in the playlist. You can add a tweak such as *"but more acoustic"*; Gemini parses it and blends it 50/50 with the playlist profile. Choosing **All playlists** combines every playlist into one taste.
+- **Saved data:** playlists and songs are stored in `data/user_library.json`, which git ignores. [src/library.py](src/library.py) holds that code.
+
+**Mood mode:** the sidebar's *Look* setting has three options:
+- **Off:** a plain dark background.
+- **Mood:** the background color follows your latest recommendation. Valence sets the hue, from violet for sad to amber for happy, and energy sets how vivid it is.
+- **Mood (animated):** the gradient also drifts and pulses in time with the top song's tempo. The animation is turned off for anyone whose system asks for reduced motion.
+
+All content sits on a solid white card, so text stays readable on every background.
+
 **Reliability testing:**
 - `tests/test_ai_recommender.py` uses a fake LLM to test grounding, removal of made-up songs, error fallback and input validation. It needs no API key.
+- `tests/test_library.py` tests playlist profiles, tie handling, duplicate songs, recovery from a corrupted library file, excluding playlist songs, blending a tweak, and clamping or falling back for estimated features.
 - `python -m src.evaluate` runs fixed requests against the real Gemini API. It reports parsing accuracy, grounding, how often the AI path succeeded, and consistency across repeated runs.
 
 ---
@@ -121,7 +138,17 @@ Requires Python 3.10 or newer. Run every command from the project root folder.
 
 ### Running the App
 
+Web app (playlists, adding songs, mood mode). It opens in your browser:
+
 ```bash
+streamlit run app.py
+```
+
+Command line:
+
+```bash
+python -m src.main --playlist Gym                       # recommend for a saved playlist ("all" = every playlist)
+python -m src.main --playlist Gym --tweak "more acoustic"
 python -m src.main                                      # interactive: type requests, blank line to quit
 python -m src.main --ask "sad acoustic songs for a rainy day"
 python -m src.main --profiles                           # original preset-profile demo (no AI)

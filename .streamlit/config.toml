@@ -1,0 +1,8 @@
+[theme]
+# Light widgets on solid white cards keep text contrast high on every mood background
+base = "light"
+primaryColor = "#6d28d9"
+textColor = "#111827"
+backgroundColor = "#ffffff"
+secondaryBackgroundColor = "#f3f4f6"
+font = "sans serif"

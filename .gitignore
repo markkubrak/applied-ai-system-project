@@ -15,5 +15,9 @@ venv/
 .env
 logs/
 
+# Personal music library (created by the app)
+data/user_library.json
+data/user_library.json.bak
+
 # Pytest cache
 .pytest_cache/

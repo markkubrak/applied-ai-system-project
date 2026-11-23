@@ -5,13 +5,17 @@ Run from the project root with:
     python -m src.main                      interactive AI recommender
     python -m src.main --ask "chill study music, no vocals"
     python -m src.main --profiles           original preset-profile demo (no AI)
+    python -m src.main --playlist Gym       recommend for a saved playlist ("all" = every playlist)
+    streamlit run app.py                    web app: playlists, add songs, mood mode
 """
 
 import argparse
 
 from dotenv import load_dotenv
 
-from src.ai_recommender import recommend_from_text
+from src.ai_recommender import recommend_for_playlist, recommend_from_text
+from src.library import (ALL_PLAYLISTS, all_songs, load_library, playlist_profile,
+                         playlist_songs)
 from src.recommender import load_songs, recommend_songs
 
 # Highest possible score: sum of all weights in src/recommender.py (see README table)
@@ -129,15 +133,14 @@ def print_ai_result(result: dict) -> None:
     """Print the output of the AI (RAG) pipeline."""
     mode = "AI (Gemini + retrieval)" if result["used_ai"] else "Fallback (ranked list, no AI)"
     print("=" * 64)
-    print(f"Request: {result['request']}")
+    print(f"Request: {result['request'] or '(none)'}")
     print(f"Mode: {mode}")
     print("=" * 64)
 
     # 1. The user profile the AI built (same shape as the preset profiles)
     p = result["prefs"]
-    parsed = not any("could not understand" in w or "AI unavailable" in w
-                     for w in result["warnings"])
-    print("Profile built from your request:" if parsed
+    source = result["profile_source"]
+    print(f"Profile from {source}:" if source != "defaults"
           else "Profile (defaults; the AI could not read your request):")
     print(f"  genre: {p['favorite_genre'] or '(any)'} | mood: {p['favorite_mood'] or '(any)'}")
     print(f"  energy {p['target_energy']:.2f} | acousticness {p['target_acousticness']:.2f} | "
@@ -145,21 +148,21 @@ def print_ai_result(result: dict) -> None:
           f"{p['target_instrumentalness']:.2f} | discovery {p['discovery']:.2f}")
 
     # 2. Final picks (AI-written when available), with each song's weighted score
-    scores = {song["title"]: score for song, score, _ in result["retrieved"]}
+    scores = {song["id"]: score for song, score, _ in result["retrieved"]}
     print(f"\n{'AI picks' if result['used_ai'] else 'Top picks'}: {result['summary']}")
     for rank, pick in enumerate(result["picks"], 1):
         song = pick["song"]
         print(f"{rank}. {song['title']} by {song['artist']}  [{song['genre']}, {song['mood']}]"
-              f"  score {scores[song['title']]:.2f}")
+              f"  score {scores[song['id']]:.2f}")
         if result["used_ai"]:
             print(f"   {pick['reason']}")
 
     # 3. What the weighted scoring engine retrieved, with full breakdowns
-    picked = {pick["song"]["title"] for pick in result["picks"]}
+    picked = {pick["song"]["id"] for pick in result["picks"]}
     print(f"\nRetrieved by weighted scoring (top {len(result['retrieved'])}, "
           f"max {MAX_SCORE:.2f}; * = picked):")
     for rank, (song, score, explanation) in enumerate(result["retrieved"], 1):
-        mark = "*" if song["title"] in picked else " "
+        mark = "*" if song["id"] in picked else " "
         print(f" {mark}{rank}. {song['title']} by {song['artist']}  score {score:.2f}")
         for reason in explanation.split("; "):
             print(f"       - {reason}")
@@ -171,12 +174,33 @@ def print_ai_result(result: dict) -> None:
     print()
 
 
+def run_playlist(name: str, tweak: str, catalog: list) -> None:
+    """Recommend for a saved playlist (created in the web app)."""
+    lib = load_library()
+    name = ALL_PLAYLISTS if name.lower() == "all" else name
+    pool = all_songs(catalog, lib)
+    try:
+        songs = playlist_songs(lib, name, pool)
+        profile = playlist_profile(songs)
+    except (KeyError, ValueError) as exc:
+        names = ", ".join(lib["playlists"]) or "none yet (create one with: streamlit run app.py)"
+        print(f"Error: {exc.args[0]}. Saved playlists: {names}")
+        return
+    print(f"Playlist '{name}': {len(songs)} songs")
+    print_ai_result(recommend_for_playlist(name, profile, [s["id"] for s in songs], pool,
+                                           request=tweak, on_status=show_status))
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Music Recommender Simulation")
     parser.add_argument("--ask", metavar="REQUEST",
                         help='natural-language request, e.g. --ask "calm music for studying"')
     parser.add_argument("--profiles", action="store_true",
                         help="run the original preset-profile demo (no AI)")
+    parser.add_argument("--playlist", metavar="NAME",
+                        help='recommend for a saved playlist; "all" combines every playlist')
+    parser.add_argument("--tweak", metavar="REQUEST", default="",
+                        help='with --playlist: adjust the taste, e.g. --tweak "more acoustic"')
     args = parser.parse_args()
 
     load_dotenv()  # reads GEMINI_API_KEY from .env if present
@@ -186,6 +210,8 @@ def main() -> None:
     if args.profiles:
         for name, prefs in PROFILES.items():
             print_recommendations(name, prefs, songs)
+    elif args.playlist:
+        run_playlist(args.playlist, args.tweak, songs)
     elif args.ask:
         print_ai_result(recommend_from_text(args.ask, songs, on_status=show_status))
     else:

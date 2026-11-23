@@ -1,46 +1,61 @@
 flowchart TD
-    %% Music Recommender - RAG architecture
+    %% Music Recommender - RAG + playlists architecture
 
-    USER(["User request<br/>(plain English)"])
-    MAIN["src/main.py<br/>CLI: interactive / --ask / --profiles"]
-    CSV[("data/songs.csv<br/>song catalog")]
-    GEMINI{{"Gemini API<br/>(LLM)"}}
+    USER(["User"])
+    APP["app.py (Streamlit)<br/>Discover / My Playlists / Add a Song<br/>Mood mode background"]
+    CLI["src/main.py (CLI)<br/>--ask / --playlist / --profiles"]
+    CSV[("data/songs.csv<br/>catalog")]
+    LIBJSON[("data/user_library.json<br/>user songs + playlists")]
+    GEMINI{{"Gemini API"}}
     LOG[("logs/recommender.log")]
 
-    subgraph AI["src/ai_recommender.py: recommend_from_text()"]
-        PARSE["1. Parse<br/>parse_request(): LLM → preference JSON"]
-        GUARD["2. Guardrail<br/>validate_prefs(): clamp 0-1,<br/>reject unknown genre/mood, defaults"]
-        GEN["4. Generate<br/>LLM writes picks using ONLY<br/>retrieved songs as context"]
-        VERIFY["5. Verify<br/>verify_picks(): drop songs<br/>not in retrieved set"]
-        FALLBACK["Fallback<br/>top ranked songs, no AI<br/>(missing key, API error, no valid picks)"]
+    subgraph LIB["src/library.py"]
+        STORE["load / save library<br/>add_song, playlists<br/>(duplicate + corrupt-file guards)"]
+        PROFILE["playlist_profile()<br/>average features, most common<br/>genre/mood, discovery from popularity"]
     end
 
-    subgraph REC["src/recommender.py: retrieval engine"]
-        LOAD["load_songs()"]
-        RANK["3. Retrieve<br/>recommend_songs() + score_song()<br/>top-k with score explanations"]
+    subgraph AI["src/ai_recommender.py"]
+        EST["estimate_song_features()<br/>LLM guesses features → validate_song()<br/>clamp ranges, flag unknown songs"]
+        PARSE["Parse request<br/>parse_request() → validate_prefs()"]
+        BLEND["blend_prefs()<br/>playlist profile + request tweak"]
+        GEN["Generate<br/>LLM picks using ONLY retrieved songs"]
+        VERIFY["Verify<br/>drop songs not retrieved"]
+        FALLBACK["Fallback<br/>top ranked songs, no AI"]
     end
 
-    OUT[/"Recommendations with reasons<br/>+ warnings"/]
+    RANK["src/recommender.py<br/>recommend_songs() + score_song()<br/>fixed weights → top 5 with breakdowns<br/>(excludes songs already in playlist)"]
+    OUT[/"Profile + picks + score breakdowns<br/>+ warnings"/]
 
-    subgraph QA["Reliability testing"]
-        TESTS["tests/test_ai_recommender.py<br/>fake LLM, no key needed"]
-        EVAL["src/evaluate.py<br/>parsing, grounding, AI success,<br/>consistency on real Gemini"]
-    end
+    USER --> APP & CLI
+    APP -- "add song" --> EST
+    EST <--> GEMINI
+    EST -- "user reviews/edits" --> STORE
+    STORE <--> LIBJSON
+    STORE --> PROFILE
 
-    USER --> MAIN --> PARSE
-    CSV --> LOAD --> RANK
+    APP & CLI -- "text request" --> PARSE
     PARSE <--> GEMINI
-    PARSE --> GUARD --> RANK
+    PARSE -- "Discover" --> RANK
+    PROFILE -- "playlist" --> BLEND
+    PARSE -- "optional tweak" --> BLEND
+    BLEND --> RANK
+    CSV --> RANK
+    STORE -- "user songs join the pool" --> RANK
+
     RANK --> GEN
     GEN <--> GEMINI
     GEN --> VERIFY
     VERIFY -- "valid picks" --> OUT
     VERIFY -- "none valid" --> FALLBACK
-    PARSE -. "error: default prefs" .-> GUARD
-    GEN -. "error" .-> FALLBACK
+    GEN -. "API error" .-> FALLBACK
     FALLBACK --> OUT
-    OUT --> MAIN
+    OUT --> APP & CLI
 
     AI -. "logs every step" .-> LOG
-    TESTS -. checks .-> AI
-    EVAL -. checks .-> AI
+
+    subgraph QA["Reliability testing"]
+        T1["tests/test_ai_recommender.py"]
+        T2["tests/test_library.py"]
+        EVAL["src/evaluate.py (real Gemini)"]
+    end
+    QA -. checks .-> AI & LIB
