@@ -19,9 +19,9 @@ from src.library import (ALL_PLAYLISTS, add_song, add_to_playlist, all_songs,
                          create_playlist, delete_playlist, load_library,
                          playlist_profile, playlist_songs, remove_from_playlist,
                          save_library)
+from src.explain import MAX_SCORE, describe, friendly_reasons, match_percent, profile_words
 from src.recommender import load_songs
 
-MAX_SCORE = 6.75  # sum of all weights in src/recommender.py
 LOOKS = ["Off", "Mood", "Mood (animated)"]
 
 load_dotenv()
@@ -36,12 +36,12 @@ def get_catalog():
 # ---------------------------------------------------------------- mood styling
 
 def mood_colors(prefs: dict) -> tuple:
-    """Map a profile to two background colors: valence picks the hue, energy the intensity."""
+    """Map a profile to two background colors: energy picks the hue, valence the brightness."""
     valence = prefs.get("target_valence", 0.5)
     energy = prefs.get("target_energy", 0.5)
-    hue = (250 + valence * 140) % 360        # violet (sad) -> magenta -> amber (happy)
-    sat = 35 + energy * 50                   # calm = muted, intense = vivid
-    light = 22 + energy * 14
+    hue = 230 - (energy ** 1.5) * 215        # calm = blue -> teal -> intense = orange-red
+    sat = 45 + energy * 40                   # calm = softer, intense = vivid
+    light = 18 + valence * 16                # sad = darker, happy = brighter
     c1 = f"hsl({hue:.0f}, {sat:.0f}%, {light:.0f}%)"
     c2 = f"hsl({(hue + 40) % 360:.0f}, {sat:.0f}%, {light - 8:.0f}%)"
     return c1, c2
@@ -49,13 +49,10 @@ def mood_colors(prefs: dict) -> tuple:
 
 def apply_style(look: str, prefs: dict, bpm: float) -> None:
     """Inject CSS: a neutral theme, or a mood gradient (optionally animated)."""
-    if look == "Off":
-        background = "background: #0f172a;"
-        animation = ""
-    else:
-        c1, c2 = mood_colors(prefs)
-        background = f"background: linear-gradient(135deg, {c1}, {c2}, {c1}); background-size: 300% 300%;"
-        animation = ""
+    # Colors are registered CSS properties so the browser can fade between them
+    c1, c2 = ("#0f172a", "#0f172a") if look == "Off" else mood_colors(prefs)
+    animation = ""
+    if look != "Off":
         if look == "Mood (animated)":
             drift = 30 - 22 * prefs.get("target_energy", 0.5)   # seconds per cycle
             beat = 60 / max(40, min(220, bpm))                   # one pulse per beat
@@ -73,7 +70,16 @@ def apply_style(look: str, prefs: dict, bpm: float) -> None:
                 .stApp, .stApp::before {{ animation: none !important; }}
             }}"""
     st.markdown(f"""<style>
-        .stApp {{ {background} }}
+        @property --mood1 {{ syntax: '<color>'; inherits: false; initial-value: #0f172a; }}
+        @property --mood2 {{ syntax: '<color>'; inherits: false; initial-value: #0f172a; }}
+        .stApp {{
+            --mood1: {c1}; --mood2: {c2};
+            background: linear-gradient(135deg, var(--mood1), var(--mood2), var(--mood1));
+            background-size: 300% 300%;
+            transition: --mood1 1.2s ease, --mood2 1.2s ease;
+        }}
+        .st-key-confirm_delete button {{ background: #dc2626; border-color: #dc2626; color: #ffffff; }}
+        .match {{ font-weight: 700; color: #4c1d95; }}
         [data-testid="stHeader"] {{ background: transparent; }}
         /* All content sits on a solid card so text contrast never depends on the background */
         .block-container {{
@@ -91,12 +97,57 @@ def apply_style(look: str, prefs: dict, bpm: float) -> None:
 
 # ---------------------------------------------------------------- shared pieces
 
+def flash(message: str) -> None:
+    """Queue a toast that survives st.rerun() (shown at the start of the next run)."""
+    st.session_state["flash"] = message
+
+
 def save(lib: dict) -> None:
     save_library(lib)
     st.session_state["lib_version"] = st.session_state.get("lib_version", 0) + 1
 
 
+# Optional playlist-table columns: label -> (song field, words for low / high values or None)
+EXTRA_COLUMNS = {
+    "Genre": ("genre", None), "Mood": ("mood", None),
+    "Energy": ("energy", ("calm", "intense")),
+    "Mood tone": ("valence", ("dark / sad", "bright / happy")),
+    "Sound": ("acousticness", ("electronic", "acoustic")),
+    "Vocals": ("instrumentalness", ("mostly vocals", "instrumental")),
+    "Tempo": ("tempo_bpm", None), "Popularity": ("popularity", None),
+    "Year": ("release_year", None), "Added by you": ("source", None),
+}
+
+
+def song_row(song: dict, columns: list) -> dict:
+    """Title + artist, plus the chosen columns (in words unless numbers are switched on)."""
+    row = {"Title": song["title"], "Artist": song["artist"]}
+    for label in columns:
+        field, words = EXTRA_COLUMNS[label]
+        value = song.get(field, "")
+        if label == "Added by you":
+            value = "✓" if value == "user" else ""
+        elif label == "Tempo":
+            value = f"{value} BPM"
+        elif words and not show_numbers():
+            value = describe(float(value), *words)
+        row[label] = value
+    return row
+
+
+def show_numbers() -> bool:
+    return st.session_state.get("show_numbers", False)
+
+
 def profile_pills(prefs: dict) -> str:
+    """Profile as pills: plain words, plus the raw values when numbers are switched on."""
+    words = "".join(f'<span class="pill">{w}</span>' for w in profile_words(prefs))
+    if not show_numbers():
+        return words
+    return words + "<br>" + number_pills(prefs)
+
+
+def number_pills(prefs: dict) -> str:
     items = [f"genre: {prefs['favorite_genre'] or 'any'}", f"mood: {prefs['favorite_mood'] or 'any'}",
              f"energy {prefs['target_energy']:.2f}", f"acoustic {prefs['target_acousticness']:.2f}",
              f"valence {prefs['target_valence']:.2f}",
@@ -116,6 +167,7 @@ def run_with_status(label: str, fn):
 
 def remember_mood(result: dict) -> None:
     """The latest recommendation drives the mood background."""
+    st.session_state["mood_source"] = "result"
     st.session_state["mood_prefs"] = result["prefs"]
     if result["picks"]:
         st.session_state["mood_bpm"] = float(result["picks"][0]["song"].get("tempo_bpm", 100))
@@ -126,12 +178,16 @@ def add_to_playlist_control(lib: dict, song: dict, key: str) -> None:
     if not names:
         st.caption("Create a playlist in **My Playlists** to save songs.")
         return
-    c1, c2 = st.columns([3, 1])
+    c1, c2 = st.columns([3, 1], vertical_alignment="bottom")
     target = c1.selectbox("Playlist", names, key=f"pl_{key}", label_visibility="collapsed")
     if c2.button("Add", key=f"add_{key}"):
-        add_to_playlist(lib, target, song["id"])
-        save(lib)
-        st.toast(f"Added '{song['title']}' to {target}")
+        if song["id"] in lib["playlists"][target]:
+            flash(f"'{song['title']}' is already in {target}")
+        else:
+            add_to_playlist(lib, target, song["id"])
+            save(lib)
+            flash(f"Added '{song['title']}' to {target}")
+        st.rerun()  # redraw now so the playlist shows the new song immediately
 
 
 def render_result(result: dict, lib: dict, key: str) -> None:
@@ -150,23 +206,35 @@ def render_result(result: dict, lib: dict, key: str) -> None:
     for i, pick in enumerate(result["picks"]):
         song = pick["song"]
         score, why = scores[song["id"]]
+        percent = match_percent(score)
         with st.container(border=True):
+            raw = f' <span class="score">({score:.2f} / {MAX_SCORE})</span>' if show_numbers() else ""
             st.markdown(f"### {song['title']}  \n{song['artist']} · "
                         f'<span class="pill">{song["genre"]}</span><span class="pill">{song["mood"]}</span>'
-                        f' <span class="score">{score:.2f} / {MAX_SCORE}</span>',
+                        f' <span class="match">{percent}% match</span>{raw}',
                         unsafe_allow_html=True)
+            st.progress(percent / 100)
             if result["used_ai"]:
                 st.write(pick["reason"])
-            with st.expander("Why it scored this way"):
-                for reason in why.split("; "):
-                    st.write(f"- {reason}")
+            with st.expander("Why this song?"):
+                for reason in friendly_reasons(song, result["prefs"]):
+                    st.write(reason)
+                if show_numbers():
+                    st.caption("Points per feature:")
+                    for reason in why.split("; "):
+                        st.caption(f"- {reason}")
             add_to_playlist_control(lib, song, f"{key}_{i}")
 
-    with st.expander(f"All {len(result['retrieved'])} songs retrieved by weighted scoring"):
+    with st.expander(f"All {len(result['retrieved'])} songs the matcher found"):
         picked = {p["song"]["id"] for p in result["picks"]}
-        st.dataframe([{"picked": "★" if s["id"] in picked else "", "title": s["title"],
-                       "artist": s["artist"], "score": round(sc, 2)}
-                      for s, sc, _ in result["retrieved"]], hide_index=True, width="stretch")
+        rows = []
+        for s, sc, _ in result["retrieved"]:
+            row = {"picked": "★" if s["id"] in picked else "", "title": s["title"],
+                   "artist": s["artist"], "match": f"{match_percent(sc)}%"}
+            if show_numbers():
+                row["score"] = round(sc, 2)
+            rows.append(row)
+        st.dataframe(rows, hide_index=True, width="stretch")
     for w in result["warnings"]:
         st.caption(f"Note: {w}")
 
@@ -190,6 +258,41 @@ def discover_tab(catalog: list, lib: dict) -> None:
         render_result(st.session_state["discover_result"], lib, "disc")
 
 
+@st.dialog("Delete playlist?")
+def confirm_delete(lib: dict, name: str) -> None:
+    st.write(f"Delete **{name}**? This removes the playlist. "
+             "Your saved songs stay in your library.")
+    c1, c2 = st.columns(2)
+    if c1.button("Cancel", width="stretch"):
+        st.session_state.pop("pending_delete", None)
+        st.rerun()
+    if c2.button("Delete", key="confirm_delete", width="stretch"):
+        delete_playlist(lib, name)
+        save(lib)
+        st.session_state.pop("pending_delete", None)
+        st.session_state.pop("active_playlist", None)
+        st.session_state.pop("playlist_result", None)
+        st.rerun()
+
+
+def how_matching_works() -> None:
+    with st.expander("How matching works"):
+        st.markdown(
+            "Every song gets a **match %** against your taste profile:\n"
+            "- **Genre** counts the most, then **energy** (calm ↔ intense) and **mood**.\n"
+            "- **Sound** (electronic ↔ acoustic), **mood tone** (sad ↔ happy) and "
+            "**vocals** (sung ↔ instrumental) fine-tune it: the closer, the better.\n"
+            "- **Popularity** breaks ties, toward hits or hidden gems depending on your taste.\n\n"
+            "The top matches are handed to Gemini, which picks and explains its favorites. "
+            "It can't suggest songs the matcher didn't find.")
+        if show_numbers():
+            st.table([{"feature": f, "max points": p} for f, p in [
+                ("genre match", 2.0), ("energy closeness", 1.5), ("mood match", 1.0),
+                ("acousticness closeness", 0.75), ("valence closeness", 0.5),
+                ("instrumentalness closeness", 0.5), ("popularity vs discovery", 0.5),
+                ("total", 6.75)]])
+
+
 def playlists_tab(catalog: list, lib: dict) -> None:
     pool = all_songs(catalog, lib)
     left, right = st.columns([1, 2])
@@ -211,28 +314,33 @@ def playlists_tab(catalog: list, lib: dict) -> None:
             st.info("No playlists yet. Create one above.")
             return
         options = names + ([ALL_PLAYLISTS] if len(names) > 1 else [])
-        current = st.session_state.get("active_playlist")
-        active = st.radio("Choose a playlist", options,
-                          index=options.index(current) if current in options else 0)
-        st.session_state["active_playlist"] = active
-        if active != ALL_PLAYLISTS and st.button(f"Delete '{active}'"):
-            delete_playlist(lib, active)
-            save(lib)
-            st.rerun()
+        if st.session_state.get("active_playlist") not in options:
+            st.session_state.pop("active_playlist", None)  # deleted or first visit
+        active = st.selectbox("Choose a playlist", options, key="active_playlist")
+        if active != ALL_PLAYLISTS and st.button("Delete playlist"):
+            st.session_state["pending_delete"] = active
+        if st.session_state.get("pending_delete") in lib["playlists"]:
+            confirm_delete(lib, st.session_state["pending_delete"])
 
     with right:
         songs = playlist_songs(lib, active, pool)
+        if st.session_state.get("mood_playlist") != active:
+            st.session_state["mood_playlist"] = active
+            st.session_state["mood_source"] = "playlist"
+        if st.session_state.get("mood_source") == "playlist" and songs:
+            st.session_state["mood_prefs"] = playlist_profile(songs)
+            st.session_state["mood_bpm"] = sum(s.get("tempo_bpm", 100) for s in songs) / len(songs)
         st.subheader(f"{active} · {len(songs)} songs")
         if songs:
-            st.dataframe([{"title": s["title"], "artist": s["artist"], "genre": s["genre"],
-                           "mood": s["mood"], "energy": s["energy"], "valence": s["valence"],
-                           "yours": "✓" if s.get("source") == "user" else ""}
-                          for s in songs], hide_index=True, width="stretch")
+            extra = st.pills("Show columns", list(EXTRA_COLUMNS), selection_mode="multi",
+                             key="playlist_columns")
+            st.dataframe([song_row(s, extra or []) for s in songs],
+                         hide_index=True, width="stretch")
 
         if active != ALL_PLAYLISTS:
             in_list = {s["id"] for s in songs}
             choices = {f"{s['title']} — {s['artist']}": s["id"] for s in pool if s["id"] not in in_list}
-            c1, c2 = st.columns([3, 1])
+            c1, c2 = st.columns([3, 1], vertical_alignment="bottom")
             picked = c1.multiselect("Add songs from the catalog or your library", list(choices))
             if c2.button("Add songs", disabled=not picked):
                 for label in picked:
@@ -241,7 +349,7 @@ def playlists_tab(catalog: list, lib: dict) -> None:
                 st.rerun()
             if songs:
                 labels = {f"{s['title']} — {s['artist']}": s["id"] for s in songs}
-                c1, c2 = st.columns([3, 1])
+                c1, c2 = st.columns([3, 1], vertical_alignment="bottom")
                 gone = c1.selectbox("Remove a song", list(labels), index=None, placeholder="Choose a song")
                 if c2.button("Remove", disabled=gone is None):
                     remove_from_playlist(lib, active, labels[gone])
@@ -320,7 +428,7 @@ def add_song_tab(catalog: list, lib: dict) -> None:
                     add_to_playlist(lib, target, song["id"])
                 save(lib)
                 del st.session_state["draft"]
-                st.toast(f"Saved '{song['title']}'")
+                flash(f"Saved '{song['title']}'")
                 st.rerun()
 
 
@@ -329,16 +437,19 @@ def add_song_tab(catalog: list, lib: dict) -> None:
 def main() -> None:
     catalog = get_catalog()
     lib = load_library()
+    if "flash" in st.session_state:
+        st.toast(st.session_state.pop("flash"))
 
     with st.sidebar:
         st.header("🎵 Look")
         look = st.radio("Background", LOOKS, index=0,
                         help="Mood: the background color follows the mood of your latest "
                              "recommendation. Animated: it drifts and pulses to the top song's tempo.")
+        st.toggle("Show the numbers", key="show_numbers",
+                  help="Show raw scores and feature values for anyone curious.")
         st.caption(f"Catalog: {len(catalog)} songs · Your songs: {len(lib['songs'])} · "
                    f"Playlists: {len(lib['playlists'])}")
 
-    apply_style(look, st.session_state.get("mood_prefs", {}), st.session_state.get("mood_bpm", 100))
     st.title("Mood Music Recommender")
     st.caption("Gemini understands your request, a weighted scoring engine retrieves matching "
                "songs, and Gemini explains its picks using only those songs.")
@@ -350,6 +461,10 @@ def main() -> None:
         playlists_tab(catalog, lib)
     with add:
         add_song_tab(catalog, lib)
+    how_matching_works()
+
+    # Applied last so it reflects mood changes made during this run (no one-click lag)
+    apply_style(look, st.session_state.get("mood_prefs", {}), st.session_state.get("mood_bpm", 100))
 
 
 main()

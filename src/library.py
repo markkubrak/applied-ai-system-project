@@ -7,6 +7,7 @@ by averaging its songs' features, so the weighted scoring engine works unchanged
 
 import json
 import logging
+import os
 import shutil
 from collections import Counter
 from pathlib import Path
@@ -14,7 +15,8 @@ from typing import Dict, List
 
 log = logging.getLogger("music_ai")  # shared logger, configured in ai_recommender
 
-LIBRARY_PATH = Path("data/user_library.json")
+# Override with MUSIC_LIBRARY_PATH (used by tests so they never touch your real library)
+LIBRARY_PATH = Path(os.getenv("MUSIC_LIBRARY_PATH", "data/user_library.json"))
 FIRST_USER_ID = 1001  # catalog ids are small; user ids never collide with them
 PROFILE_FEATURES = {
     "target_energy": "energy",

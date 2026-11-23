@@ -38,10 +38,12 @@ In the web app (`streamlit run app.py`) you can build playlists and add your own
 
 **Mood mode:** the sidebar's *Look* setting has three options:
 - **Off:** a plain dark background.
-- **Mood:** the background color follows your latest recommendation. Valence sets the hue, from violet for sad to amber for happy, and energy sets how vivid it is.
+- **Mood:** the background color follows the playlist you've selected or your latest recommendation. Energy sets the color, from blue for calm to orange-red for intense, and valence sets the brightness (darker for sad, brighter for happy). Switching playlists fades smoothly from one color to the next.
 - **Mood (animated):** the gradient also drifts and pulses in time with the top song's tempo. The animation is turned off for anyone whose system asks for reduced motion.
 
 All content sits on a solid white card, so text stays readable on every background.
+
+**Plain-English scores:** each song shows a **match %** and reasons such as "✓ Same genre (rock)" or "Energy: very close to what you want". The profile is described in words, like "Energy: intense". Switch on **Show the numbers** in the sidebar to also see the raw values and points per feature. [src/explain.py](src/explain.py) holds that code.
 
 **Reliability testing:**
 - `tests/test_ai_recommender.py` uses a fake LLM to test grounding, removal of made-up songs, error fallback and input validation. It needs no API key.
